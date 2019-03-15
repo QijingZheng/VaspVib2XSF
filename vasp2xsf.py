@@ -8,7 +8,7 @@ import numpy as np
 from ase.io import read
 
 
-def load_vibmodes_from_outcar(inf='OUTCAR', include_imag=True):
+def load_vibmodes_from_outcar(inf='OUTCAR', include_imag=False):
     '''
     Read vibration eigenvectors and eigenvalues from OUTCAR.
     '''
@@ -102,7 +102,6 @@ def main(cml):
     p = parse_cml_args(cml)
 
     atoms = read(p.poscar, format='vasp')
-    assert 0 <= p.mode <= atoms.get_number_of_atoms()
     if not os.path.isfile('MODES.npy'):
         omegas, modes = load_vibmodes_from_outcar(p.outcar)
         np.save('OMEGAS', omegas)
@@ -112,6 +111,7 @@ def main(cml):
         modes = np.load('MODES.npy')
 
     n_mode = len(omegas)
+    assert 0 <= p.mode <= n_mode
     if p.mode == 0:
         for ii in range(n_mode):
             write_xsf(ii+1, atoms, modes[ii], p.scale)
