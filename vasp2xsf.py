@@ -24,7 +24,7 @@ def load_vibmodes_from_outcar(inf='OUTCAR', include_imag=False):
     for ii in range(ln-1, 0, -1):
         if '2PiTHz' in out[ii]:
             THz_index.append(ii)
-        if 'Eigenvectors and eigenvalues' in out[ii]:
+        if 'Eigenvectors and eigenvalues of the dynamical matrix' in out[ii]:
             i_index = ii + 2
             break
     j_index = THz_index[0] + nions + 2
@@ -104,6 +104,8 @@ def main(cml):
     atoms = read(p.poscar, format='vasp')
     if not os.path.isfile('MODES.npy'):
         omegas, modes = load_vibmodes_from_outcar(p.outcar)
+        # Eigenvectors after division by SQRT(mass): displacement vector.
+        modes /= np.sqrt(atoms.get_masses()[None, :, None])
         np.save('OMEGAS', omegas)
         np.save('MODES', modes)
     else:
