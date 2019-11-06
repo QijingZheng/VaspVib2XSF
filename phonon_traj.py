@@ -163,7 +163,7 @@ def phonon_traj(w, e, p0, q=0, temperature=300,
         print("{:4s}: {:.4f} ang".format(elemnent, A[ind]))
 
     trajs = []
-    pos0 = p0.positions
+    pos0 = p0.positions.copy()
     ndigit = int(np.log10(nsw)) + 1
     fmt = 'traj_{{:0{}d}}.vasp'.format(ndigit)
 
