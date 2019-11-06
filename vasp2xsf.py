@@ -8,7 +8,7 @@ import numpy as np
 from ase.io import read
 
 
-def load_vibmodes_from_outcar(inf='OUTCAR', include_imag=False):
+def load_vibmodes_from_outcar(inf='OUTCAR', exclude_imag=False):
     '''
     Read vibration eigenvectors and eigenvalues from OUTCAR.
     '''
@@ -38,10 +38,10 @@ def load_vibmodes_from_outcar(inf='OUTCAR', include_imag=False):
     modes = [line.split()[3:6] for line in out[i_index:j_index]
              if ('dx' not in line) and ('2PiTHz' not in line)]
 
-    omegas = np.array(omegas)
-    modes = np.array(modes).reshape((-1, nions, 3))
+    omegas = np.array(omegas, dtype=float)
+    modes = np.array(modes. dtype=float).reshape((-1, nions, 3))
 
-    if include_imag:
+    if exclude_imag:
         omegas = omegas[real_freq]
         modes = modes[real_freq]
 
