@@ -39,7 +39,7 @@ def msd_classical(w, T=300, m=1.0, freq_unit='cm-1'):
                 m * ase.units._amu * w**2 
             ) * ase.units.m**2
 
-def msd_quantum(w, T=300, m=1.0, freq_unit='cm-1'):
+def msd_quantum(w, T=300, m=1.0, n=None, freq_unit='cm-1'):
     """
     The quantum mean square displacement (MSD) of a harmonic oscillator at
     temperature "T" with frequency "w" and mass "m".
@@ -53,6 +53,7 @@ def msd_quantum(w, T=300, m=1.0, freq_unit='cm-1'):
             w:  the frequency of the HO.
             m:  the mass of the HO in unified atomic mass unit.
             T:  the temperature in Kelvin.
+            n:  the number of phonons
     freq_unit:  the unit of the frequency.
 
     Return:
@@ -72,7 +73,8 @@ def msd_quantum(w, T=300, m=1.0, freq_unit='cm-1'):
         raise ValueError('Invalid unit of frequency!')
 
     # the phonon population
-    n = 1. / (np.exp(BetaHbarOmega) - 1.)
+    if n is None:
+        n = 1. / (np.exp(BetaHbarOmega) - 1.)
 
     return ase.units._hbar / (2 * m * ase.units._amu * w) * (1. + 2 * n) * ase.units.m**2
 
