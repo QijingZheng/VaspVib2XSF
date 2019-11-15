@@ -39,7 +39,7 @@ def load_vibmodes_from_outcar(inf='OUTCAR', exclude_imag=False):
              if ('dx' not in line) and ('2PiTHz' not in line)]
 
     omegas = np.array(omegas, dtype=float)
-    modes = np.array(modes. dtype=float).reshape((-1, nions, 3))
+    modes = np.array(modes, dtype=float).reshape((-1, nions, 3))
 
     if exclude_imag:
         omegas = omegas[real_freq]
