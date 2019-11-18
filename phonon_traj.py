@@ -229,8 +229,7 @@ def parse_cml_args(cml):
                      default=1.0,
                      help='The time step [fs] used in the phonon animation.')
     arg.add_argument('--maxmin', dest='maxmin', action='store_true',
-                     help='Whethere to save the maximal/minimal displacement,
-                     default False.')
+                     help='Whethere to save the maximal/minimal displacement, default False.')
 
     return arg.parse_args(cml)
 
