@@ -25,6 +25,7 @@ def msd_classical(w, T=300, m=1.0, freq_unit='cm-1'):
     Return:
         MSD in Angstrom**2
     """
+    T = np.asarray(T, dtype=float)
 
     if freq_unit.lower() == 'cm-1':
         # Change to angular frequency; 2 pi f, f in unit of Hz
@@ -62,19 +63,22 @@ def msd_quantum(w, T=300, m=1.0, n=None, freq_unit='cm-1'):
     CmToEv       = PlanckConstant * SpeedOfLight * 100
 
     if freq_unit.lower() == 'cm-1':
-        BetaHbarOmega = w * CmToEv / (ase.units.kB * T)
+        HbarOmega = w * CmToEv 
         # Change to angular frequency; 2 pi f, f in unit of Hz
         w = 2 * np.pi * (w * SpeedOfLight * 100)
     elif freq_unit.lower() == 'ev':
-        BetaHbarOmega = w / (ase.units.kB * T)
+        HbarOmega = w
         # Change to angular frequency; 2 pi f, f in unit of Hz
         w = 2 * np.pi * (w / PlanckConstant)
     else:
         raise ValueError('Invalid unit of frequency!')
 
+    T = np.asarray(T, dtype=float)
     # the phonon population
     if n is None:
-        n = 1. / (np.exp(BetaHbarOmega) - 1.)
+        n = np.zeros_like(T, dtype=float)
+        n[T < 1E-12] = 0
+        n[T > 1E-12] = 1. / (np.exp(HbarOmega / (ase.units.kB * T[T > 1E-12])) - 1.)
 
     return ase.units._hbar / (2 * m * ase.units._amu * w) * (1. + 2 * n) * ase.units.m**2
 
@@ -119,7 +123,10 @@ def load_vibmodes_from_outcar(inf='OUTCAR', exclude_imag=False):
     return omegas, modes
 
 def phonon_traj(w, e, p0, q=0, temperature=300,
-                dt=1.0, nsw=None, msd='quantum', freq_unit='cm-1'):
+                dt=1.0, nsw=None, msd='quantum',
+                nPhonon=None,
+                saveMaxMin=True,
+                freq_unit='cm-1'):
     '''
     Generate the phonon animation. The relation between the atomic displacement
     and the phonon polarization vector (eigenvector of the dynamical matrix) can
@@ -153,7 +160,9 @@ def phonon_traj(w, e, p0, q=0, temperature=300,
         dt = T / nsw
 
     if msd.lower() == 'quantum':
-        A = np.sqrt(msd_quantum(w, T=temperature, m=M, freq_unit=freq_unit))
+        A = np.sqrt(msd_quantum(w, T=temperature, m=M,
+                    n=nPhonon,
+                    freq_unit=freq_unit))
     elif msd.lower() == 'classical':
         A = np.sqrt(msd_classical(w, T=temperature, m=M, freq_unit=freq_unit))
     else:
@@ -169,13 +178,25 @@ def phonon_traj(w, e, p0, q=0, temperature=300,
     ndigit = int(np.log10(nsw)) + 1
     fmt = 'traj_{{:0{}d}}.vasp'.format(ndigit)
 
-    for ii in range(nsw):
-        pos1 = pos0 + A[:, None] * e * np.sin(2 * np.pi * ii / nsw)
-        p0.set_positions(pos1)
-        trajs.append(p0.copy())
-        write(fmt.format(ii + 1), p0, vasp5=True, direct=True)
 
-    write('traj.xyz', trajs, format='extxyz')
+    if saveMaxMin:
+        pMax = pos0 + A[:, None] * e
+        p0.set_positions(pMax)
+        np.savetxt('maxD.dat', pMax, fmt='%22.16f')
+        write('dmax.vasp', p0, vasp5=True, direct=true)
+
+        pMin = pos0 - A[:, None] * e
+        p0.set_positions(pMin)
+        np.savetxt('minD.dat', pMin, fmt='%22.16f')
+        write('dmin.vasp', p0, vasp5=True, direct=true)
+    else:
+        for ii in range(nsw):
+            pos1 = pos0 + A[:, None] * e * np.sin(2 * np.pi * ii / nsw)
+            p0.set_positions(pos1)
+            trajs.append(p0.copy())
+            write(fmt.format(ii + 1), p0, vasp5=True, direct=True)
+
+        write('traj.xyz', trajs, format='extxyz')
 
 def parse_cml_args(cml):
     '''
@@ -192,6 +213,9 @@ def parse_cml_args(cml):
     arg.add_argument('-m', dest='mode', action='store', type=int,
                      default=0,
                      help='Select the vibration mode.')
+    arg.add_argument('-nph', dest='nPhonon', action='store', type=int,
+                     default=None,
+                     help='The phonon occupation of the selected mode.')
     arg.add_argument('-t', dest='temperature', action='store', type=float,
                      default=300,
                      help='The temperature.')
@@ -204,6 +228,9 @@ def parse_cml_args(cml):
     arg.add_argument('-dt', dest='dt', action='store', type=float,
                      default=1.0,
                      help='The time step [fs] used in the phonon animation.')
+    arg.add_argument('--maxmin', dest='maxmin', action='store_true',
+                     help='Whethere to save the maximal/minimal displacement,
+                     default False.')
 
     return arg.parse_args(cml)
 
@@ -218,7 +245,9 @@ def main(cml):
             omegas[arg.mode], modes[arg.mode], atoms,
             temperature=arg.temperature,
             nsw=arg.nsw, dt=arg.dt,
-            msd=arg.msd
+            nPhonon=arg.nPhonon,
+            msd=arg.msd,
+            saveMaxMin=args.maxmin,
     )
     print("Done!")
 
