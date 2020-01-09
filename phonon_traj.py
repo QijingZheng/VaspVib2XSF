@@ -160,11 +160,11 @@ def phonon_traj(w, e, p0, q=0, temperature=300,
         dt = T / nsw
 
     if msd.lower() == 'quantum':
-        A = np.sqrt(msd_quantum(w, T=temperature, m=M,
+        A = np.sqrt(2 * msd_quantum(w, T=temperature, m=M,
                     n=nPhonon,
                     freq_unit=freq_unit))
     elif msd.lower() == 'classical':
-        A = np.sqrt(msd_classical(w, T=temperature, m=M, freq_unit=freq_unit))
+        A = np.sqrt(2 * msd_classical(w, T=temperature, m=M, freq_unit=freq_unit))
     else:
         A = 1.0 / np.sqrt(M)
 
