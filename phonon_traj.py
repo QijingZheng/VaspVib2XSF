@@ -183,12 +183,12 @@ def phonon_traj(w, e, p0, q=0, temperature=300,
         pMax = pos0 + A[:, None] * e
         p0.set_positions(pMax)
         np.savetxt('maxD.dat', pMax, fmt='%22.16f')
-        write('dmax.vasp', p0, vasp5=True, direct=true)
+        write('dmax.vasp', p0, vasp5=True, direct=True)
 
         pMin = pos0 - A[:, None] * e
         p0.set_positions(pMin)
         np.savetxt('minD.dat', pMin, fmt='%22.16f')
-        write('dmin.vasp', p0, vasp5=True, direct=true)
+        write('dmin.vasp', p0, vasp5=True, direct=True)
     else:
         for ii in range(nsw):
             pos1 = pos0 + A[:, None] * e * np.sin(2 * np.pi * ii / nsw)
@@ -246,7 +246,7 @@ def main(cml):
             nsw=arg.nsw, dt=arg.dt,
             nPhonon=arg.nPhonon,
             msd=arg.msd,
-            saveMaxMin=args.maxmin,
+            saveMaxMin=arg.maxmin,
     )
     print("Done!")
 
