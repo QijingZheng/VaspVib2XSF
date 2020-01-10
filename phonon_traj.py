@@ -191,7 +191,7 @@ def phonon_traj(w, e, p0, q=0, temperature=300,
         write('dmin.vasp', p0, vasp5=True, direct=True)
     else:
         for ii in range(nsw):
-            pos1 = pos0 + A[:, None] * e * np.sin(2 * np.pi * ii / nsw)
+            pos1 = pos0 + A[:, None] * e * np.sin(2 * np.pi * ii * dt / T)
             p0.set_positions(pos1)
             trajs.append(p0.copy())
             write(fmt.format(ii + 1), p0, vasp5=True, direct=True)
