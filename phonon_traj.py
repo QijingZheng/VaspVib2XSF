@@ -212,7 +212,7 @@ def parse_cml_args(cml):
                      help='Location of VASP POSCAR.')
     arg.add_argument('-m', dest='mode', action='store', type=int,
                      default=0,
-                     help='Select the vibration mode.')
+                     help='Select the vibration mode, starting from 0.')
     arg.add_argument('-nph', dest='nPhonon', action='store', type=int,
                      default=None,
                      help='The phonon occupation of the selected mode.')
