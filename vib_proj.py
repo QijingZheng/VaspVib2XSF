@@ -143,7 +143,7 @@ if __name__ == '__main__':
         # phonon polarization vector multiply the the mass square root
         v_sqrtM = np.sqrt(M[None,:,None]) * v
         # normal mode coordinates
-        nc = np.dot(pd, v_sqrtM.reshape((-1, natom * 3)).T)
+        nc = np.dot(pd, v_sqrtM.reshape((-1, natom * 3)).T) / np.sqrt(natom)
         vc = np.diff(nc, axis=0) / dt
 
         # save the frequencies to file, in unit of cm^-1
