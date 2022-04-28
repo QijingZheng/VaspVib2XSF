@@ -124,6 +124,7 @@ def load_vibmodes_from_outcar(inf='OUTCAR', exclude_imag=False):
 
 def phonon_traj(w, e, p0, q=0, temperature=300,
                 dt=1.0, nsw=None, msd='quantum',
+                linear_traj=False,
                 nPhonon=None,
                 saveMaxMin=True,
                 freq_unit='cm-1'):
@@ -152,6 +153,9 @@ def phonon_traj(w, e, p0, q=0, temperature=300,
         T = 1E15 * PlanckConstant / w
     else:
         raise ValueError('Invalid unit of frequency!')
+
+    if linear_traj:
+        assert nsw is not None, "NSW can not be none!" 
 
     if nsw is None:
         nsw = int(T / dt) + 5
@@ -189,6 +193,17 @@ def phonon_traj(w, e, p0, q=0, temperature=300,
         p0.set_positions(pMin)
         np.savetxt('minD.dat', pMin, fmt='%22.16f')
         write('dmin.vasp', p0, vasp5=True, direct=True)
+    elif linear_traj:
+        disp = np.linspace(-1, 1, nsw, endpoint=True)
+        for ii in range(nsw):
+            pos1 = pos0 + A[:, None] * e * disp[ii]
+            p0.set_positions(pos1)
+            write(fmt.format(ii + 1), p0, vasp5=True, direct=True)
+
+        # normal mode coordinate
+        Qmax = np.sum((np.sqrt(p0.get_masses()) * A)[:,None] * e**2)
+        cc = 'Normal-mode Coordinate in "sqrt(amu) * Angstrom"'
+        np.savetxt('Q.dat', Qmax*disp, fmt='%12.6f', header=cc)
     else:
         for ii in range(nsw):
             pos1 = pos0 + A[:, None] * e * np.sin(2 * np.pi * ii * dt / T)
@@ -229,7 +244,9 @@ def parse_cml_args(cml):
                      default=1.0,
                      help='The time step [fs] used in the phonon animation.')
     arg.add_argument('--maxmin', dest='maxmin', action='store_true',
-                     help='Whethere to save the maximal/minimal displacement, default False.')
+                     help='Whether to save the maximal/minimal displacement, default False.')
+    arg.add_argument('--linear_traj', dest='linear_traj', action='store_true',
+                     help='Linear interpolation betweewn maximal and minimal displacement.')
 
     return arg.parse_args(cml)
 
@@ -247,6 +264,7 @@ def main(cml):
             nPhonon=arg.nPhonon,
             msd=arg.msd,
             saveMaxMin=arg.maxmin,
+            linear_traj=arg.linear_traj,
     )
     print("Done!")
 
