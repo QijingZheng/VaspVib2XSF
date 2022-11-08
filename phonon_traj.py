@@ -146,6 +146,7 @@ def phonon_traj(w, e, p0, q=0, temperature=300,
         freq_unit: unit of the frequency
     '''
     M = p0.get_masses()
+    Natoms = len(p0)
 
     if freq_unit.lower() == 'cm-1':
         T = 1E15 / (w * SpeedOfLight * 100)
@@ -172,6 +173,9 @@ def phonon_traj(w, e, p0, q=0, temperature=300,
     else:
         A = 1.0 / np.sqrt(M)
 
+    # the total energy is proportional to Natoms
+    A *= np.sqrt(Natoms)
+
     chemical_symbols = p0.get_chemical_symbols()
     for elemnent in set(chemical_symbols):
         ind = chemical_symbols.index(elemnent)
@@ -181,7 +185,6 @@ def phonon_traj(w, e, p0, q=0, temperature=300,
     pos0 = p0.positions.copy()
     ndigit = int(np.log10(nsw)) + 1
     fmt = 'traj_{{:0{}d}}.vasp'.format(ndigit)
-
 
     if saveMaxMin:
         pMax = pos0 + A[:, None] * e
