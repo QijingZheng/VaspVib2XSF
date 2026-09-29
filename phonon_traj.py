@@ -1,12 +1,12 @@
 #!/usr/bin/env python
 
-import os, sys, argparse
+import sys, argparse
 import ase
 from ase.io import read, write
 import numpy as np
 
-PlanckConstant = 4.13566733e-15         # [eV s]
-SpeedOfLight = 299792458.               # [m/s]
+from vaspvib import (load_vibmodes_from_outcar, participation_ratio,
+                     is_localized, PlanckConstant, SpeedOfLight)
 
 def msd_classical(w, T=300, m=1.0, freq_unit='cm-1'):
     """
@@ -82,51 +82,12 @@ def msd_quantum(w, T=300, m=1.0, n=None, freq_unit='cm-1'):
 
     return ase.units._hbar / (2 * m * ase.units._amu * w) * (1. + 2 * n) * ase.units.m**2
 
-def load_vibmodes_from_outcar(inf='OUTCAR', exclude_imag=False):
-    '''
-    Read vibration eigenvectors and eigenvalues from OUTCAR.
-    '''
-
-    out = [line for line in open(inf) if line.strip()]
-    ln = len(out)
-    for line in out:
-        if "NIONS =" in line:
-            nions = int(line.split()[-1])
-            break
-
-    THz_index = []
-    for ii in range(ln-1, 0, -1):
-        if '2PiTHz' in out[ii]:
-            THz_index.append(ii)
-        if 'Eigenvectors and eigenvalues of the dynamical matrix' in out[ii]:
-            i_index = ii + 2
-            break
-    j_index = THz_index[0] + nions + 2
-
-    real_freq = [False if 'f/i' in line else True
-                 for line in out[i_index:j_index]
-                 if '2PiTHz' in line]
-
-    # frequencies in unit of cm-1
-    omegas = [line.split()[-4] for line in out[i_index:j_index]
-              if '2PiTHz' in line]
-    modes = [line.split()[3:6] for line in out[i_index:j_index]
-             if ('dx' not in line) and ('2PiTHz' not in line)]
-
-    omegas = np.array(omegas, dtype=float)
-    modes = np.array(modes, dtype=float).reshape((-1, nions, 3))
-
-    if exclude_imag:
-        omegas = omegas[real_freq]
-        modes = modes[real_freq]
-
-    return omegas, modes
-
 def phonon_traj(w, e, p0, q=0, temperature=300,
                 dt=1.0, nsw=None, msd='quantum',
                 linear_traj=False,
                 nPhonon=None,
                 saveMaxMin=True,
+                scale_by_natoms=True,
                 freq_unit='cm-1'):
     '''
     Generate the phonon animation. The relation between the atomic displacement
@@ -143,6 +104,8 @@ def phonon_traj(w, e, p0, q=0, temperature=300,
         dt: the time step in the ouput animation, unit [fs]
         nsw: total number of steps in the animation
         msd: the method to calculate mean-square displacement
+        scale_by_natoms: scale the amplitude by sqrt(Natoms), see the NOTE
+                         below; only appropriate for delocalized modes
         freq_unit: unit of the frequency
     '''
     M = p0.get_masses()
@@ -173,10 +136,56 @@ def phonon_traj(w, e, p0, q=0, temperature=300,
     else:
         A = 1.0 / np.sqrt(M)
 
-    # the total energy is proportional to Natoms
-    A *= np.sqrt(Natoms)
+    # NOTE: the sqrt(Natoms) factor below is a *convention*, not a physical
+    # identity.  Read this before comparing amplitudes across supercells.
+    #
+    # Without the factor, the displacement u_i = A_i * e_i carries exactly
+    # (n + 1/2) * hbar * w, i.e. ONE quantum for the WHOLE supercell.  Since a
+    # delocalized mode has |e_i|^2 ~ 1/Natoms, the per-atom displacement would
+    # then shrink as 1/sqrt(Natoms) and results obtained with different
+    # supercell sizes are no longer comparable.
+    #
+    # Multiplying by sqrt(Natoms) assigns one quantum per ATOM, so that the
+    # total energy is Natoms * (n + 1/2) * hbar * w and the per-atom
+    # displacement becomes supercell-independent for DELOCALIZED modes.
+    #
+    # Two caveats:
+    #   - It is WRONG for LOCALIZED modes (defect vibrations, adsorbed
+    #     molecules), where |e_i|^2 ~ 1 on a few atoms regardless of Natoms.
+    #     The displacement then grows as sqrt(Natoms).  Use "--no-scale".
+    #   - For a zone-center mode folded from a primitive cell, the physically
+    #     motivated factor is sqrt(N_cells), which differs from sqrt(Natoms)
+    #     by a constant sqrt(atoms per primitive cell).  The supercell scaling
+    #     is right either way, the absolute normalization is not.
+    #
+    # RELATION TO vib_proj.py: that script reports the STANDARD normal-mode
+    # coordinate, Q = sum_i sqrt(M_i) e_i . u_i, with no Natoms factor of any
+    # kind, because the energy sum rule forbids one there.  So with the
+    # default scaling the Q.dat written below is LARGER by sqrt(Natoms) than
+    # the coordinate vib_proj.py would assign to the same structure.  Pass
+    # "--no-scale" when the two are meant to be compared directly.
+    #
+    # The participation ratio tells the delocalized and localized cases apart,
+    # so warn rather than leave the caller to notice.  PR is computed on the
+    # mass-weighted eigenvector, which is what "e" is here.
+    pr = participation_ratio(e[np.newaxis, ...])[0]
+    print("Participation ratio: {:.2f} of {:d} atoms (PR/Nions = {:.3f})".format(
+        pr, Natoms, pr / Natoms))
 
+    if scale_by_natoms:
+        if is_localized(pr, Natoms):
+            print("WARNING: this mode is LOCALIZED, so the default "
+                  "sqrt(Natoms) amplitude scaling is not appropriate:\n"
+                  "         it inflates the displacement by about "
+                  "sqrt({:d}) = {:.1f} and will keep growing with the\n"
+                  "         supercell size instead of converging. "
+                  "Consider --no-scale.".format(Natoms, np.sqrt(Natoms)))
+        A *= np.sqrt(Natoms)
+
+    # NB: A_i is only the prefactor; the displacement of atom i is A_i * |e_i|,
+    # which for a delocalized mode is smaller by roughly 1/sqrt(Natoms).
     chemical_symbols = p0.get_chemical_symbols()
+    print("Amplitude prefactor A (displacement of atom i is A_i * |e_i|):")
     for elemnent in set(chemical_symbols):
         ind = chemical_symbols.index(elemnent)
         print("{:4s}: {:.4f} ang".format(elemnent, A[ind]))
@@ -205,7 +214,14 @@ def phonon_traj(w, e, p0, q=0, temperature=300,
 
         # normal mode coordinate
         Qmax = np.sum((np.sqrt(p0.get_masses()) * A)[:,None] * e**2)
-        cc = 'Normal-mode Coordinate in "sqrt(amu) * Angstrom"'
+        cc = 'Normal-mode Coordinate in "sqrt(amu) * Angstrom"\n'
+        if scale_by_natoms:
+            cc += 'Normalization: one quantum per ATOM, i.e. the amplitude A\n'
+            cc += 'is scaled by sqrt(Natoms) and the total energy of the mode\n'
+            cc += 'is Natoms * (n + 1/2) * hbar * w.'
+        else:
+            cc += 'Normalization: one quantum per SUPERCELL, i.e. the total\n'
+            cc += 'energy of the mode is (n + 1/2) * hbar * w.'
         np.savetxt('Q.dat', Qmax*disp, fmt='%12.6f', header=cc)
     else:
         for ii in range(nsw):
@@ -233,7 +249,10 @@ def parse_cml_args(cml):
                      help='Select the vibration mode, starting from 0.')
     arg.add_argument('-nph', dest='nPhonon', action='store', type=int,
                      default=None,
-                     help='The phonon occupation of the selected mode.')
+                     help='The phonon occupation of the selected mode. '
+                          'NOTE: unless --no-scale is given, the amplitude is '
+                          'scaled by sqrt(Natoms), so the total energy is '
+                          'Natoms * (n + 1/2) * hbar * w, not (n + 1/2) * hbar * w.')
     arg.add_argument('-t', dest='temperature', action='store', type=float,
                      default=300,
                      help='The temperature.')
@@ -250,6 +269,11 @@ def parse_cml_args(cml):
                      help='Whether to save the maximal/minimal displacement, default False.')
     arg.add_argument('--linear_traj', dest='linear_traj', action='store_true',
                      help='Linear interpolation betweewn maximal and minimal displacement.')
+    arg.add_argument('--no-scale', dest='scale_natoms', action='store_false',
+                     help='Do NOT scale the amplitude by sqrt(Natoms). The mode '
+                          'then carries one quantum for the whole supercell. '
+                          'Use this for LOCALIZED modes (defects, adsorbates), '
+                          'where the default scaling diverges with supercell size.')
 
     return arg.parse_args(cml)
 
@@ -257,8 +281,10 @@ def main(cml):
     arg = parse_cml_args(cml)
 
     atoms = read(arg.poscar, format='vasp')
-    omegas, modes = load_vibmodes_from_outcar(arg.outcar)
-    print("Generation phonon animation for mode {:d} with frequency {:8.4f} cm-1".format(arg.mode, omegas[arg.mode]))
+    omegas, modes, real_freq = load_vibmodes_from_outcar(arg.outcar)
+    print("Generation phonon animation for mode {:d} with frequency {:8.4f} cm-1{}".format(
+        arg.mode, omegas[arg.mode],
+        '' if real_freq[arg.mode] else ' (IMAGINARY)'))
 
     phonon_traj(
             omegas[arg.mode], modes[arg.mode], atoms,
@@ -268,6 +294,7 @@ def main(cml):
             msd=arg.msd,
             saveMaxMin=arg.maxmin,
             linear_traj=arg.linear_traj,
+            scale_by_natoms=arg.scale_natoms,
     )
     print("Done!")
 

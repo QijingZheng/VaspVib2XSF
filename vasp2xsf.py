@@ -7,45 +7,10 @@ import argparse
 import numpy as np
 from ase.io import read
 
+from vaspvib import (load_vibmodes_from_outcar, participation_ratio,
+                     is_localized)
 
-def load_vibmodes_from_outcar(inf='OUTCAR', exclude_imag=False):
-    '''
-    Read vibration eigenvectors and eigenvalues from OUTCAR.
-    '''
-
-    out = [line for line in open(inf) if line.strip()]
-    ln = len(out)
-    for line in out:
-        if "NIONS =" in line:
-            nions = int(line.split()[-1])
-            break
-
-    THz_index = []
-    for ii in range(ln-1, 0, -1):
-        if '2PiTHz' in out[ii]:
-            THz_index.append(ii)
-        if 'Eigenvectors and eigenvalues of the dynamical matrix' in out[ii]:
-            i_index = ii + 2
-            break
-    j_index = THz_index[0] + nions + 2
-
-    real_freq = [False if 'f/i' in line else True
-                 for line in out[i_index:j_index]
-                 if '2PiTHz' in line]
-
-    omegas = [line.split()[-4] for line in out[i_index:j_index]
-              if '2PiTHz' in line]
-    modes = [line.split()[3:6] for line in out[i_index:j_index]
-             if ('dx' not in line) and ('2PiTHz' not in line)]
-
-    omegas = np.array(omegas, dtype=float)
-    modes = np.array(modes, dtype=float).reshape((-1, nions, 3))
-
-    if exclude_imag:
-        omegas = omegas[real_freq]
-        modes = modes[real_freq]
-
-    return omegas, modes
+CACHE = 'MODES.npz'
 
 
 def parse_cml_args(cml):
@@ -61,13 +26,70 @@ def parse_cml_args(cml):
                      default='POSCAR',
                      help='Location of VASP POSCAR.')
     arg.add_argument('-m', dest='mode', action='store', type=int,
-                     default=0,
-                     help='Select the vibration mode, 0 for all modes.')
+                     default=None,
+                     help='Select the vibration mode, STARTING FROM 0 (same '
+                          'convention as phonon_traj.py). Default: all modes. '
+                          'The output file is named after the 1-based mode '
+                          'number printed by VASP, so "-m 0" writes '
+                          'mode_0001.xsf.')
     arg.add_argument('-s', dest='scale', action='store', type=float,
                      default=1.0,
                      help='Scale factor of the vector field.')
+    arg.add_argument('--no-cache', dest='cache', action='store_false',
+                     help='Do not read or write {}.'.format(CACHE))
 
     return arg.parse_args(cml)
+
+
+def fingerprint(outcar, poscar):
+    '''
+    Identify the inputs a cache file was built from, so that a stale cache
+    left over from another system is never silently reused.
+    '''
+    return np.array([
+        os.path.abspath(outcar), '{:.6f}'.format(os.path.getmtime(outcar)),
+        str(os.path.getsize(outcar)),
+        os.path.abspath(poscar), '{:.6f}'.format(os.path.getmtime(poscar)),
+    ], dtype='U')
+
+
+def load_displacements(outcar, poscar, masses, use_cache=True):
+    '''
+    Return the DISPLACEMENT vectors (dynamical-matrix eigenvectors divided by
+    sqrt(mass)) together with the frequencies and the participation ratios.
+    '''
+    fp = fingerprint(outcar, poscar)
+
+    if use_cache and os.path.isfile(CACHE):
+        try:
+            z = np.load(CACHE, allow_pickle=False)
+            if np.array_equal(z['fingerprint'], fp):
+                return z['omegas'], z['modes'], z['real_freq'], z['pr']
+            print('{} was built from different inputs, re-reading {}.'.format(
+                CACHE, outcar))
+        except (OSError, ValueError, KeyError):
+            print('{} is unreadable, re-reading {}.'.format(CACHE, outcar))
+
+    omegas, modes, real_freq = load_vibmodes_from_outcar(outcar)
+    if modes.shape[1] != len(masses):
+        raise ValueError(
+            'OUTCAR has {} ions but {} has {}!'.format(
+                modes.shape[1], poscar, len(masses)))
+
+    # NB: the participation ratio must be evaluated on the MASS-WEIGHTED
+    # eigenvectors, i.e. BEFORE the division below.  PR is invariant under an
+    # overall rescaling of a mode, but NOT under the per-atom rescaling by
+    # 1/sqrt(M_i), which is a different (displacement-based) definition.
+    pr = participation_ratio(modes)
+
+    # Eigenvectors after division by SQRT(mass): displacement vector.
+    modes = modes / np.sqrt(np.asarray(masses)[None, :, None])
+
+    if use_cache:
+        np.savez(CACHE, omegas=omegas, modes=modes, real_freq=real_freq,
+                 pr=pr, fingerprint=fp)
+
+    return omegas, modes, real_freq, pr
 
 
 def write_xsf(imode, atoms, vector, scale=1.0):
@@ -102,23 +124,33 @@ def main(cml):
     p = parse_cml_args(cml)
 
     atoms = read(p.poscar, format='vasp')
-    if not os.path.isfile('MODES.npy'):
-        omegas, modes = load_vibmodes_from_outcar(p.outcar)
-        # Eigenvectors after division by SQRT(mass): displacement vector.
-        modes /= np.sqrt(atoms.get_masses()[None, :, None])
-        np.save('OMEGAS', omegas)
-        np.save('MODES', modes)
-    else:
-        omegas = np.load('OMEGAS.npy')
-        modes = np.load('MODES.npy')
+    omegas, modes, real_freq, pr = load_displacements(
+        p.outcar, p.poscar, atoms.get_masses(), use_cache=p.cache)
 
     n_mode = len(omegas)
-    assert 0 <= p.mode <= n_mode
-    if p.mode == 0:
-        for ii in range(n_mode):
-            write_xsf(ii+1, atoms, modes[ii], p.scale)
+    nions = len(atoms)
+    if p.mode is None:
+        selected = range(n_mode)
     else:
-        write_xsf(p.mode, atoms, modes[p.mode - 1], p.scale)
+        if not 0 <= p.mode < n_mode:
+            raise SystemExit(
+                'Mode index {} out of range; OUTCAR has {} modes, '
+                'indexed 0 to {}.'.format(p.mode, n_mode, n_mode - 1))
+        selected = [p.mode]
+
+    loc = is_localized(pr, nions)
+
+    print('{:<15s} {:>12s} {:>8s} {:>9s}  {}'.format(
+        'file', 'freq [cm-1]', 'PR', 'PR/Nions', 'flags'))
+    for ii in selected:
+        # the file name follows the 1-based mode number printed by VASP
+        write_xsf(ii + 1, atoms, modes[ii], p.scale)
+        flags = ' '.join(f for f, on in
+                         (('IMAGINARY', not real_freq[ii]), ('LOCALIZED', loc[ii]))
+                         if on)
+        print('{:<15s} {:12.4f} {:8.2f} {:9.3f}  {}'.format(
+            'mode_{:04d}.xsf'.format(ii + 1), omegas[ii],
+            pr[ii], pr[ii] / nions, flags))
 
 
 if __name__ == "__main__":
